@@ -1,0 +1,9 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+pydantic==2.10.4
+pydantic-settings==2.7.0
+cyvcf2==0.31.1
+pandas==2.2.3
+numpy==2.2.1
+python-dotenv==1.0.1

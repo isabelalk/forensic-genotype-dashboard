@@ -1,0 +1,39 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app/uploads:/app/app/uploads
+      - ./backend/app/artifacts:/app/app/artifacts
+    environment:
+      - HIRISPLEX_MARKERS_PATH=/app/app/data/hrisplexs_id.txt
+      - PLEX34_MARKERS_PATH=/app/app/data/plex34_id.txt
+      - PLEX34_STRUCTURE_POPULATION_PATH=/app/app/data/plex34_structure/metapop_3202samples.csv
+      - PLEX34_STRUCTURE_MAINPARAMS_PATH=/app/app/data/plex34_structure/mainparams
+      - PLEX34_STRUCTURE_EXTRAPARAMS_PATH=/app/app/data/plex34_structure/extraparams
+      - UPLOAD_DIR=/app/app/uploads
+      - ARTIFACT_DIR=/app/app/artifacts
+      - CORS_ORIGINS=http://localhost,http://localhost:80,http://localhost:5173
+    networks:
+      - hirisplex-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - hirisplex-network
+
+networks:
+  hirisplex-network:
+    driver: bridge
+
+volumes:
+  uploads:
