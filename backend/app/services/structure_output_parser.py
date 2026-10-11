@@ -25,7 +25,11 @@ class Plex34StructureOutputParseError(Exception):
 
 class Plex34StructureOutputParser:
     @staticmethod
-    def parse_text(output_text: str) -> ParsedStructureOutput:
+    def parse_text(
+        output_text: str,
+        max_lines: int | None = None,
+        max_clusters: int | None = None,
+    ) -> ParsedStructureOutput:
         lines = output_text.splitlines()
         start_index: int | None = None
         end_index: int | None = None
@@ -56,17 +60,30 @@ class Plex34StructureOutputParser:
             raise Plex34StructureOutputParseError(
                 "No inferred ancestry sample lines were found in the STRUCTURE output."
             )
+        if max_lines is not None and len(sample_lines) > max_lines:
+            raise Plex34StructureOutputParseError(
+                f"STRUCTURE output has {len(sample_lines)} sample lines (maximum allowed is {max_lines})."
+            )
 
         ancestry_rows = [
-            Plex34StructureOutputParser._parse_ancestry_row(row_index=row_index, sample_line=sample_line)
+            Plex34StructureOutputParser._parse_ancestry_row(
+                row_index=row_index, sample_line=sample_line, max_clusters=max_clusters
+            )
             for row_index, sample_line in enumerate(sample_lines, start=1)
         ]
 
         return ParsedStructureOutput(sample_lines=sample_lines, ancestry_rows=ancestry_rows)
 
     @staticmethod
-    def _parse_ancestry_row(row_index: int, sample_line: str) -> Plex34AncestryRow:
+    def _parse_ancestry_row(
+        row_index: int, sample_line: str, max_clusters: int | None = None
+    ) -> Plex34AncestryRow:
         header_text, probabilities = Plex34StructureOutputParser._split_probability_tokens(sample_line)
+        if max_clusters is not None and len(probabilities) > max_clusters:
+            raise Plex34StructureOutputParseError(
+                f"STRUCTURE sample line {row_index} has {len(probabilities)} cluster probabilities "
+                f"(maximum allowed is {max_clusters})."
+            )
         cluster_probabilities = [
             Plex34ClusterProbability(label=f"Cluster {cluster_index}", probability=probability)
             for cluster_index, probability in enumerate(probabilities, start=1)

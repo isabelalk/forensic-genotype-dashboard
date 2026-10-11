@@ -18,7 +18,19 @@ EXTRAPARAMS_FILENAME = "extraparams"
 
 
 class Plex34StructureDataError(Exception):
-    pass
+    """A problem with the user's VCF; the message is safe to return as 400."""
+
+
+class Plex34StructureConfigError(Exception):
+    """A server-side template or data file is missing or unreadable. Never shown to clients."""
+
+
+class Plex34StructureOutputTooLargeError(Exception):
+    """The STRUCTURE input file would exceed the configured byte cap."""
+
+    def __init__(self, max_bytes: int) -> None:
+        super().__init__(f"STRUCTURE input would exceed {max_bytes} bytes (maximum allowed is {max_bytes}).")
+        self.max_bytes = max_bytes
 
 
 @dataclass(frozen=True)
@@ -57,7 +69,7 @@ class MainparamsData:
 
 def load_marker_ids(marker_path: Path) -> list[str]:
     if not marker_path.exists():
-        raise Plex34StructureDataError(f"Marker file not found: {marker_path}")
+        raise Plex34StructureConfigError(f"Marker file not found: {marker_path}")
 
     markers: list[str] = []
     seen: set[str] = set()
@@ -69,13 +81,13 @@ def load_marker_ids(marker_path: Path) -> list[str]:
                 seen.add(marker)
 
     if not markers:
-        raise Plex34StructureDataError("Plex34 marker file is empty.")
+        raise Plex34StructureConfigError("Plex34 marker file is empty.")
     return markers
 
 
 def load_population_data(population_csv: Path) -> dict[str, PopulationEntry]:
     if not population_csv.exists():
-        raise Plex34StructureDataError(f"Population CSV not found: {population_csv}")
+        raise Plex34StructureConfigError(f"Population CSV not found: {population_csv}")
 
     with population_csv.open("r", encoding="utf-8-sig", newline="") as population_file:
         first_line = population_file.readline()
@@ -92,30 +104,41 @@ def parse_vcf(vcf_path: Path, required_markers: list[str]) -> VcfData:
     markers: dict[str, VcfMarker] = {}
     warnings: list[str] = []
 
-    with _open_vcf(vcf_path) as vcf_file:
-        for raw_line in vcf_file:
-            if raw_line.startswith("##"):
-                continue
-            if raw_line.startswith("#CHROM"):
-                samples = raw_line.rstrip("\n").split("\t")[9:]
-                continue
-            if not samples:
-                continue
+    try:
+        with _open_vcf(vcf_path) as vcf_file:
+            for raw_line in vcf_file:
+                if raw_line.startswith("##"):
+                    continue
+                if raw_line.startswith("#CHROM"):
+                    samples = raw_line.rstrip("\n").split("\t")[9:]
+                    continue
+                if not samples:
+                    continue
 
-            marker = _parse_marker_line(raw_line, samples, marker_filter)
-            if marker is None:
-                continue
-            if marker.marker_id in markers:
-                warnings.append(f"Duplicate marker {marker.marker_id} ignored after first occurrence.")
-                continue
-            markers[marker.marker_id] = marker
+                marker = _parse_marker_line(raw_line, samples, marker_filter)
+                if marker is None:
+                    continue
+                if marker.marker_id in markers:
+                    warnings.append(f"Duplicate marker {marker.marker_id} ignored after first occurrence.")
+                    continue
+                markers[marker.marker_id] = marker
+    except UnicodeDecodeError as error:
+        raise Plex34StructureDataError("VCF must be UTF-8 text.") from error
+    except (EOFError, OSError) as error:
+        raise Plex34StructureDataError("VCF could not be read as a (gzip) text file.") from error
 
     if not samples:
         raise Plex34StructureDataError("VCF header with sample columns was not found.")
     return VcfData(samples=samples, markers=markers, warnings=warnings)
 
 
-def write_structure_input(output_path: Path, data: StructureInputData) -> None:
+def write_structure_input(output_path: Path, data: StructureInputData, max_bytes: int | None = None) -> int:
+    """Write the STRUCTURE input file; returns bytes written.
+
+    Raises Plex34StructureOutputTooLargeError before writing a line that would push
+    the file past `max_bytes`, so a runaway input never fills the disk.
+    """
+    written = 0
     with output_path.open("w", encoding="utf-8", newline="") as output_file:
         for sample in data.samples:
             entry = data.population.get(sample, PopulationEntry(pop_id=0, popflag=0))
@@ -123,7 +146,12 @@ def write_structure_input(output_path: Path, data: StructureInputData) -> None:
             for marker_id in data.ordered_markers:
                 allele_one, allele_two = data.markers[marker_id].genotypes.get(sample, (MISSING_CODE, MISSING_CODE))
                 row.extend([allele_one, allele_two])
-            output_file.write("\t".join(row) + "\n")
+            line = "\t".join(row) + "\n"
+            written += len(line.encode("utf-8"))
+            if max_bytes is not None and written > max_bytes:
+                raise Plex34StructureOutputTooLargeError(max_bytes)
+            output_file.write(line)
+    return written
 
 
 def write_mainparams(template_path: Path, output_path: Path, data: MainparamsData) -> None:

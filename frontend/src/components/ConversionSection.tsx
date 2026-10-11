@@ -7,9 +7,10 @@ import {
   HiOutlineInformationCircle,
   HiOutlineLightningBolt,
 } from 'react-icons/hi';
-import { vcfApi } from '../api/client';
+import { UploadExpiredError, getApiErrorMessage, vcfApi } from '../api/client';
 import { useVCFStore } from '../store/vcfStore';
 import type { ConversionResponse, Plex34StructureResponse } from '../types';
+import { Alert } from './Alert';
 import { Plex34StructureCard } from './Plex34StructureCard';
 
 type MarkerConversion = 'hirisplex' | 'plex34';
@@ -121,13 +122,27 @@ const ConversionCard = ({
 };
 
 export const ConversionSection = () => {
-  const { fileId, validationResult } = useVCFStore();
+  const { fileId, validationResult, expireUpload } = useVCFStore();
   const [activeConversion, setActiveConversion] = useState<MarkerConversion | null>(null);
   const [conversionResults, setConversionResults] = useState<{
     hirisplex?: ConversionResponse;
     plex34?: ConversionResponse;
   }>({});
   const [plex34StructureResult, setPlex34StructureResult] = useState<Plex34StructureResponse | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const runDownload = async (download: () => Promise<void>) => {
+    setDownloadError(null);
+    try {
+      await download();
+    } catch (error) {
+      if (error instanceof UploadExpiredError) {
+        expireUpload();
+        return;
+      }
+      setDownloadError(getApiErrorMessage(error, 'The download failed.'));
+    }
+  };
 
   const convertMutation = useMutation({
     mutationFn: vcfApi.convertFile,
@@ -139,8 +154,12 @@ export const ConversionSection = () => {
       setActiveConversion(null);
     },
     onError: (error) => {
-      console.error('Conversion error:', error);
       setActiveConversion(null);
+      if (error instanceof UploadExpiredError) {
+        expireUpload();
+        return;
+      }
+      console.error('Conversion error:', error);
     },
   });
 
@@ -160,6 +179,10 @@ export const ConversionSection = () => {
       setPlex34StructureResult(data);
     },
     onError: (error) => {
+      if (error instanceof UploadExpiredError) {
+        expireUpload();
+        return;
+      }
       console.error('Plex34 STRUCTURE generation error:', error);
     },
   });
@@ -171,12 +194,12 @@ export const ConversionSection = () => {
   };
 
   const handleDownloadPlex34Structure = (artifactId: string) => {
-    vcfApi.downloadPlex34StructureInput(artifactId);
+    void runDownload(() => vcfApi.downloadPlex34StructureInput(artifactId));
   };
 
   const handleDownload = (markerType: MarkerConversion) => {
     if (!fileId) return;
-    vcfApi.downloadFile(fileId, markerType);
+    void runDownload(() => vcfApi.downloadFile(fileId, markerType));
   };
 
   const canConvert = validationResult &&
@@ -189,6 +212,15 @@ export const ConversionSection = () => {
 
   return (
     <div className="space-y-5">
+      {downloadError ? (
+        <div role="alert">
+          <Alert variant="error">
+            <p className="font-bold">Download failed</p>
+            <p className="mt-1 text-sm text-[var(--color-text-muted)]">{downloadError}</p>
+          </Alert>
+        </div>
+      ) : null}
+
       <ConversionCard
         title="HIrisPlex-S"
         tone="success"
@@ -222,7 +254,11 @@ export const ConversionSection = () => {
       <Plex34StructureCard
         artifact={plex34StructureResult}
         isGenerating={plex34StructureMutation.isPending}
-        errorMessage={plex34StructureMutation.error?.message ?? null}
+        errorMessage={
+          plex34StructureMutation.error
+            ? getApiErrorMessage(plex34StructureMutation.error, 'STRUCTURE package generation failed.')
+            : null
+        }
         onGenerate={handleGeneratePlex34Structure}
         onDownload={handleDownloadPlex34Structure}
       />

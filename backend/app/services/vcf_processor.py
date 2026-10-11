@@ -1,8 +1,26 @@
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Set, List, Dict, Tuple
 import pandas as pd
 from cyvcf2 import VCF
-import io
+
+
+VALID_NUCLEOTIDES = frozenset("ATGC")
+
+
+class VCFParseError(Exception):
+    """cyvcf2 could not open or read the file. Safe to report as a client error."""
+
+
+@dataclass(frozen=True, slots=True)
+class VCFValidationSummary:
+    has_ids: bool
+    samples: list[str]
+    marker_ids: set[str]
+    missing_genotypes_count: int
+    missing_genotypes: list[dict]
+    ref_alt_valid: bool
+    duplicate_markers: list[str] = field(default_factory=list)
 
 
 class VCFProcessor:
@@ -14,13 +32,82 @@ class VCFProcessor:
     
     def __enter__(self):
         """Context manager entry"""
-        self.vcf = VCF(str(self.vcf_path))
+        try:
+            self.vcf = VCF(str(self.vcf_path))
+        except Exception as error:  # cyvcf2 raises plain Exception/OSError on bad input
+            raise VCFParseError("The VCF file could not be parsed.") from error
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit"""
         if self.vcf:
             self.vcf.close()
+
+    def validate(self, limit_details: int = 100) -> VCFValidationSummary:
+        """One pass over the file collecting everything the validate endpoint reports.
+
+        Per-variant missing-genotype detail stops being retained after
+        `limit_details` entries; the count keeps running for the whole file.
+        """
+        if not self.vcf:
+            self.vcf = VCF(str(self.vcf_path))
+
+        samples = list(self.vcf.samples)
+        has_ids = False
+        ref_alt_valid = True
+        marker_ids: set[str] = set()
+        duplicate_markers: list[str] = []
+        missing_count = 0
+        missing_details: list[dict] = []
+
+        try:
+            for variant in self.vcf:
+                marker_id = variant.ID if variant.ID and variant.ID != "." else None
+                if marker_id:
+                    has_ids = True
+                    if marker_id in marker_ids:
+                        duplicate_markers.append(marker_id)
+                    else:
+                        marker_ids.add(marker_id)
+
+                if ref_alt_valid and not (
+                    VALID_NUCLEOTIDES.issuperset(variant.REF)
+                    and all(VALID_NUCLEOTIDES.issuperset(alt) for alt in variant.ALT)
+                ):
+                    ref_alt_valid = False
+
+                genotypes_dict: dict[str, str] | None = {} if len(missing_details) < limit_details else None
+                for sample_idx, genotype in enumerate(variant.genotypes):
+                    if genotype[0] == -1 or genotype[1] == -1:
+                        missing_count += 1
+                        if genotypes_dict is not None:
+                            genotypes_dict[samples[sample_idx]] = "./."
+                    elif genotypes_dict is not None:
+                        genotypes_dict[samples[sample_idx]] = f"{genotype[0]}/{genotype[1]}"
+
+                if genotypes_dict is not None:
+                    missing_details.append({
+                        "chrom": variant.CHROM,
+                        "pos": variant.POS,
+                        "id": variant.ID or ".",
+                        "ref": variant.REF,
+                        "alt": ",".join(variant.ALT) if variant.ALT else ".",
+                        "genotypes": genotypes_dict,
+                    })
+        except Exception as error:
+            raise VCFParseError("The VCF file could not be parsed.") from error
+        finally:
+            self.vcf = VCF(str(self.vcf_path))
+
+        return VCFValidationSummary(
+            has_ids=has_ids,
+            samples=samples,
+            marker_ids=marker_ids,
+            missing_genotypes_count=missing_count,
+            missing_genotypes=missing_details,
+            ref_alt_valid=ref_alt_valid,
+            duplicate_markers=duplicate_markers,
+        )
     
     def get_samples(self) -> List[str]:
         """Get list of sample names from VCF"""

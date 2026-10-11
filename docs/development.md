@@ -29,13 +29,26 @@ Run both with the helper script:
 
 Docker exposes:
 
-- Frontend: `http://localhost`.
-- Backend: `http://localhost:8000`.
+- Frontend: `http://127.0.0.1:8080` (loopback only).
+- Backend: not published. Only the frontend container reaches it over the compose network.
 
-Start Docker:
+Start Docker (needs `BACKEND_SHARED_SECRET` in `.env`; see [deployment.md](deployment.md)):
 
 ```bash
-docker compose up --build
+BACKEND_SHARED_SECRET=dev-secret docker compose up --build
+```
+
+Local ports (`3002`, `5173`) are unchanged. `start-backend.sh` binds `127.0.0.1`.
+
+## Frontend limits in development
+
+- The upload dropzone accepts only `.vcf` and `.vcf.gz`, up to 20 MB. Larger or other files are rejected in the browser without a network request.
+- Uploads expire on the server (5 minutes after last use, 30 minutes at most). When an expired upload is used, the UI returns to the upload step with an "upload expired" message.
+- To test the proxy check locally, start the backend with `API_SHARED_SECRET=x` and the Vite dev server with `BACKEND_SHARED_SECRET=x`. The dev proxy then adds `X-Internal-Token` to `/api` requests. Without the matching variable on the dev server, `/api` requests return `403`. With neither set, the check is off.
+
+```bash
+API_SHARED_SECRET=x ./start-backend.sh
+BACKEND_SHARED_SECRET=x ./start-frontend.sh
 ```
 
 ## Runtime Data

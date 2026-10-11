@@ -38,7 +38,7 @@ class HirisPlexSResultsParseError(Exception):
 
 class HirisPlexSResultsParser:
     @staticmethod
-    def parse_text(csv_text: str) -> HirisPlexSResultsResponse:
+    def parse_text(csv_text: str, max_rows: int | None = None) -> HirisPlexSResultsResponse:
         reader = csv.DictReader(StringIO(csv_text))
         fieldnames = reader.fieldnames
         if fieldnames is None:
@@ -58,14 +58,19 @@ class HirisPlexSResultsParser:
                 f"{', '.join(missing_skin_columns)}."
             )
 
-        rows = [
-            HirisPlexSResultsParser._parse_row(
-                row_index=row_index,
-                raw_row=raw_row,
-                has_skin_columns=has_skin_columns,
+        rows: list[HirisPlexSResultRow] = []
+        for row_index, raw_row in enumerate(reader, start=1):
+            if max_rows is not None and row_index > max_rows:
+                raise HirisPlexSResultsParseError(
+                    f"HIrisPlex-S results CSV has more than {max_rows} rows (maximum allowed is {max_rows})."
+                )
+            rows.append(
+                HirisPlexSResultsParser._parse_row(
+                    row_index=row_index,
+                    raw_row=raw_row,
+                    has_skin_columns=has_skin_columns,
+                )
             )
-            for row_index, raw_row in enumerate(reader, start=1)
-        ]
         if not rows:
             raise HirisPlexSResultsParseError("HIrisPlex-S results CSV does not contain result rows.")
 

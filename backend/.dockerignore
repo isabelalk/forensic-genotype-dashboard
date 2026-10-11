@@ -1,0 +1,31 @@
+# Build context for backend/Dockerfile (context: ./backend).
+# Keep runtime data, secrets, virtualenvs and caches out of every image layer.
+
+# Runtime data
+**/uploads
+**/artifacts
+
+# Python environments and caches
+venv*
+**/venv*
+.venv
+**/.venv
+__pycache__
+**/__pycache__
+**/*.pyc
+
+# Node
+node_modules
+**/node_modules
+
+# Secrets and local env files
+.env
+.env.*
+**/.env
+**/.env.*
+
+# VCS, specs, docs and tests
+.git
+openspec
+docs
+tests

@@ -6,7 +6,7 @@ import {
   HiOutlineInformationCircle,
   HiOutlineXCircle,
 } from 'react-icons/hi';
-import { vcfApi } from '../api/client';
+import { UploadExpiredError, getApiErrorMessage, vcfApi } from '../api/client';
 import { useVCFStore } from '../store/vcfStore';
 import type { ValidationResult } from '../types';
 import { ValidationWarnings } from './ValidationWarnings';
@@ -36,11 +36,21 @@ const StatusPanel = ({ tone, icon, children }: StatusPanelProps) => (
 
 export const ValidationPanel = ({ validation }: ValidationPanelProps) => {
   const [showMissingGenotypesTable, setShowMissingGenotypesTable] = useState(false);
-  const { fileId, continueWithMissingMarkers, continueWithMissingGenotypes, setContinueWithMissingMarkers, setContinueWithMissingGenotypes } = useVCFStore();
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const { fileId, continueWithMissingMarkers, continueWithMissingGenotypes, setContinueWithMissingMarkers, setContinueWithMissingGenotypes, expireUpload } = useVCFStore();
 
-  const handleDownloadFullVCF = () => {
-    if (fileId) {
-      vcfApi.downloadFullVCF(fileId);
+  const handleDownloadFullVCF = async () => {
+    if (!fileId) return;
+
+    setDownloadError(null);
+    try {
+      await vcfApi.downloadFullVCF(fileId);
+    } catch (error) {
+      if (error instanceof UploadExpiredError) {
+        expireUpload();
+        return;
+      }
+      setDownloadError(getApiErrorMessage(error, 'The download failed.'));
     }
   };
 
@@ -145,10 +155,19 @@ export const ValidationPanel = ({ validation }: ValidationPanelProps) => {
         </div>
       </StatusPanel>
 
-      <button onClick={handleDownloadFullVCF} className="btn-primary w-full py-4 text-base">
+      <button onClick={() => void handleDownloadFullVCF()} className="btn-primary w-full py-4 text-base">
         <HiOutlineDownload className="h-5 w-5" />
         <span>Download converted VCF as CSV</span>
       </button>
+
+      {downloadError ? (
+        <div role="alert">
+          <StatusPanel tone="error" icon={<HiOutlineXCircle className="mt-0.5 h-7 w-7 flex-shrink-0 text-[var(--color-error)]" />}>
+            <p className="font-bold text-[var(--color-text)]">Download failed</p>
+            <p className="mt-1 text-sm text-[var(--color-text-muted)]">{downloadError}</p>
+          </StatusPanel>
+        </div>
+      ) : null}
     </div>
   );
 };

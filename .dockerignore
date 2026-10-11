@@ -1,0 +1,35 @@
+# Build context for frontend/Dockerfile (context: repo root).
+# Keep runtime data, secrets, virtualenvs and VCS metadata out of every image layer.
+
+# Runtime data
+**/uploads
+**/artifacts
+
+# Python environments and caches
+venv*
+**/venv*
+.venv
+**/.venv
+__pycache__
+**/__pycache__
+**/*.pyc
+
+# Node
+node_modules
+**/node_modules
+frontend/dist
+
+# Secrets and local env files
+.env
+.env.*
+**/.env
+**/.env.*
+
+# VCS, specs, docs and tooling state
+.git
+openspec
+docs
+.omo
+.agents
+.claude
+.opencode

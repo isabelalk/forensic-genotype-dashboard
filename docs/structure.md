@@ -12,6 +12,15 @@ After a VCF is uploaded and validated, the app can generate a zip package contai
 
 The package uses the PLEX-34 marker list, bundled population metadata, and vendored STRUCTURE parameter templates. Missing markers are recorded, marker order is preserved, and the generated artifact is temporary.
 
+Artifact limits (all configurable, see `backend/.env.example`):
+
+- Each package is kept for 30 minutes (`MAX_ARTIFACT_AGE_SECONDS=1800`), then removed by the retention sweeper.
+- At most 100 packages (`MAX_ARTIFACT_COUNT`) and 512 MiB in total (`MAX_ARTIFACT_DIR_BYTES`) are kept; the oldest are removed first to make room.
+- A single `plex34_structure_input.txt` may not exceed 50 MiB (`MAX_STRUCTURE_INPUT_BYTES`); generation stops with `400` and nothing is left on disk.
+- If generation fails for any reason the partial package directory is deleted.
+
+Download the zip right after generating it; the frontend does this automatically.
+
 ## Install STRUCTURE
 
 Download STRUCTURE from the Pritchard Lab website:

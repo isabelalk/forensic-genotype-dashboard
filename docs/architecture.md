@@ -19,7 +19,9 @@ The app transforms an uploaded VCF file into inputs for HIrisPlex-S and PLEX-34,
 
 The user uploads a `.vcf` or `.vcf.gz` file through the React interface. The backend checks the extension, assigns a unique ID, and writes the upload to temporary storage in chunks.
 
-The backend checks both compressed upload size and, for gzip files, decompressed size. Invalid or oversized files are removed before they enter the processing workflow.
+Before anything is written the backend runs the retention sweep and checks the upload directory quota (1 GiB by default; `507` when full). While streaming it enforces the per-file limit (20 MiB; `413`). Once stored it detects gzip by the `1f 8b` signature rather than the filename: gzip content named `.vcf` is rejected, and gzip named `.vcf.gz` is walked to enforce the 100 MiB decompressed limit. Finally a single text pass checks the VCF shape (at most 5,000 samples, 10,000 variants and 2,000,000 sample x variant cells; unique, whitespace-free sample names). Any failure deletes the file and returns `4xx`.
+
+Uploads are short-lived. Each use of a `file_id` (validate, convert, download, STRUCTURE input) refreshes the file's idle timer; a file is deleted 5 minutes after its last use, or 30 minutes after upload at the latest, whichever comes first. A background sweeper runs every minute and before every new upload. The frontend also deletes the upload (`DELETE /api/vcf/upload/{file_id}`) when the user removes the file. In containers uploads and artifacts live under `/data`, outside the source tree.
 
 ### 2. VCF Validation
 
@@ -31,6 +33,8 @@ The uploaded file is opened with `cyvcf2` and checked before conversion. Validat
 4. Detects missing genotypes and records affected variants and samples.
 5. Checks reference and alternate alleles for valid nucleotide symbols, `A`, `T`, `G`, or `C`.
 6. Detects duplicate marker identifiers and returns warnings.
+
+All six checks run in a single pass over the file inside a bounded thread pool. Per-variant genotype detail is retained for the first 100 variants only; the missing-genotype count covers the whole file. Files cyvcf2 cannot parse return `400`.
 
 The frontend shows missing markers, missing genotypes, duplicate IDs, and other warnings before conversion.
 
@@ -72,7 +76,9 @@ HIrisPlex-S and PLEX-34 results are displayed as separate workflows. Samples are
 
 ### 7. Reliability
 
-The backend uses typed Pydantic response models and explicit error responses for invalid files, malformed result data, missing sections, unsupported formats, and size violations. Temporary uploads and generated artifacts are kept only for the configured runtime period.
+The backend uses typed Pydantic response models and explicit error responses for invalid files, malformed result data, missing sections, unsupported formats, and size violations. Unexpected failures return a generic message with an `X-Request-ID` that matches the server log; exception text and paths never reach the client.
+
+Temporary uploads are kept for 5 minutes after their last use (30 minutes at most) within a 1 GiB quota; STRUCTURE artifacts are kept for 30 minutes, at most 100 at a time and 512 MiB in total. One periodic sweeper enforces both. Heavy VCF work runs in a thread pool capped at two concurrent jobs per worker, so `/health` and light requests keep answering while files are processed.
 
 ## Main Modules
 

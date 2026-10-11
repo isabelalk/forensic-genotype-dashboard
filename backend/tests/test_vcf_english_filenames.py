@@ -5,20 +5,14 @@ from unittest import TestCase
 from unittest.mock import patch
 
 import anyio
+import pandas as pd
 
 from app.api.routes import vcf
 from app.models import ConversionRequest
 
 
-@dataclass(frozen=True, slots=True)
-class RouteFilenameDataFrame:
-    rows: int = 1
-
-    def to_csv(self, index: bool = False) -> str:
-        return "SampleID\nsample-1\n"
-
-    def __len__(self) -> int:
-        return self.rows
+def RouteFilenameDataFrame() -> pd.DataFrame:
+    return pd.DataFrame({"SampleID": ["sample-1"]})
 
 
 class RouteFilenameProcessor:
@@ -36,13 +30,13 @@ class RouteFilenameProcessor:
     ) -> None:
         return None
 
-    def convert_to_hirisplex(self, required_markers: set[str]) -> RouteFilenameDataFrame:
+    def convert_to_hirisplex(self, required_markers: set[str]) -> pd.DataFrame:
         return RouteFilenameDataFrame()
 
-    def convert_to_plex34(self, required_markers: set[str]) -> RouteFilenameDataFrame:
+    def convert_to_plex34(self, required_markers: set[str]) -> pd.DataFrame:
         return RouteFilenameDataFrame()
 
-    def get_full_vcf_dataframe(self) -> RouteFilenameDataFrame:
+    def get_full_vcf_dataframe(self) -> pd.DataFrame:
         return RouteFilenameDataFrame()
 
 

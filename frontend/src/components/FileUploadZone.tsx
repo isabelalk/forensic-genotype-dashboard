@@ -1,5 +1,5 @@
-import { useCallback } from 'react';
-import { useDropzone } from 'react-dropzone';
+import { useCallback, useState } from 'react';
+import { ErrorCode, useDropzone, type FileError, type FileRejection } from 'react-dropzone';
 import {
   HiOutlineCheckCircle,
   HiOutlineCloudUpload,
@@ -7,24 +7,64 @@ import {
   HiOutlineFolderOpen,
   HiOutlineX,
 } from 'react-icons/hi';
+import {
+  ACCEPTED_VCF_EXTENSIONS,
+  MAX_VCF_UPLOAD_BYTES,
+  MAX_VCF_UPLOAD_LABEL,
+  hasAcceptedVcfExtension,
+} from '../config/limits';
 import { useVCFStore } from '../store/vcfStore';
+import { Alert } from './Alert';
+
+const ACCEPTED_EXTENSIONS_TEXT = ACCEPTED_VCF_EXTENSIONS.join(', ');
+
+const validateVcfName = (file: File): FileError | null =>
+  hasAcceptedVcfExtension(file.name)
+    ? null
+    : { code: ErrorCode.FileInvalidType, message: 'Unsupported file extension.' };
+
+const describeRejection = (rejection: FileRejection): string => {
+  const { name } = rejection.file;
+  const codes = rejection.errors.map((error) => error.code);
+
+  if (codes.includes(ErrorCode.FileInvalidType)) {
+    return `"${name}" is not a supported file type. Accepted extensions: ${ACCEPTED_EXTENSIONS_TEXT}.`;
+  }
+  if (codes.includes(ErrorCode.FileTooLarge)) {
+    return `"${name}" exceeds ${MAX_VCF_UPLOAD_LABEL}. Choose a smaller file.`;
+  }
+  if (codes.includes(ErrorCode.TooManyFiles)) {
+    return 'Select a single VCF file.';
+  }
+  return `"${name}" could not be selected.`;
+};
 
 export const FileUploadZone = () => {
   const { file, setFile } = useVCFStore();
+  const [rejectionMessage, setRejectionMessage] = useState<string | null>(null);
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const onDropAccepted = useCallback((acceptedFiles: File[]) => {
     const selectedFile = acceptedFiles[0];
     if (selectedFile) {
+      setRejectionMessage(null);
       setFile(selectedFile);
     }
   }, [setFile]);
 
+  const onDropRejected = useCallback((rejections: FileRejection[]) => {
+    const firstRejection = rejections[0];
+    setRejectionMessage(firstRejection ? describeRejection(firstRejection) : null);
+  }, []);
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
+    onDropAccepted,
+    onDropRejected,
+    validator: validateVcfName,
     accept: {
       'text/plain': ['.vcf'],
-      'application/gzip': ['.vcf.gz', '.gz'],
+      'application/gzip': ['.vcf.gz'],
     },
+    maxSize: MAX_VCF_UPLOAD_BYTES,
     multiple: false,
   });
 
@@ -102,7 +142,7 @@ export const FileUploadZone = () => {
           <div className="mb-3 flex flex-wrap items-center justify-center gap-2 text-xs text-[var(--color-text-muted)]">
             <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-card-strong)] px-3 py-1 font-mono">VCF</span>
             <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-card-strong)] px-3 py-1 font-mono">VCF.GZ</span>
-            <span>Max. 200MB</span>
+            <span>Max. {MAX_VCF_UPLOAD_LABEL}</span>
           </div>
 
           <button type="button" className="btn-primary rounded-full px-5 py-2.5 text-sm">
@@ -110,6 +150,15 @@ export const FileUploadZone = () => {
           </button>
         </div>
       </div>
+
+      {rejectionMessage ? (
+        <div role="alert">
+          <Alert variant="error">
+            <p className="font-bold">File not accepted</p>
+            <p className="mt-1 text-sm text-[var(--color-text-muted)]">{rejectionMessage}</p>
+          </Alert>
+        </div>
+      ) : null}
     </div>
   );
 };

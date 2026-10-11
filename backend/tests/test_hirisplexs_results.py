@@ -150,5 +150,5 @@ class HirisPlexSResultsParserTest(TestCase):
         self.assertEqual(payload.rows[0].top_predictions.hair_color, "Red")
         self.assertEqual(payload.rows[0].top_predictions.hair_shade, "Light")
         self.assertEqual(payload.rows[0].top_predictions.skin, "unavailable")
-        paths = {route.path for route in app.routes}
+        paths = set(app.openapi()["paths"])
         self.assertIn("/api/results/hirisplex-s", paths)

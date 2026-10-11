@@ -1,5 +1,4 @@
 import shutil
-import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +8,9 @@ from ._plex34_structure_io import (
     MAINPARAMS_FILENAME,
     STRUCTURE_INPUT_FILENAME,
     MainparamsData,
+    Plex34StructureConfigError,
     Plex34StructureDataError,
+    Plex34StructureOutputTooLargeError,
     StructureInputData,
     load_marker_ids,
     load_population_data,
@@ -18,10 +19,21 @@ from ._plex34_structure_io import (
     write_structure_input,
     write_zip,
 )
+from .retention import sweep_artifacts
+
+__all__ = [
+    "Plex34StructureConfigError",
+    "Plex34StructureError",
+    "Plex34StructureOutputTooLargeError",
+    "Plex34StructureService",
+    "StructureArtifact",
+    "StructureArtifactRequest",
+    "StructureTemplatePaths",
+]
 
 
 class Plex34StructureError(Exception):
-    pass
+    """User-facing generation error (bad VCF content, output over the cap)."""
 
 
 @dataclass(frozen=True)
@@ -50,15 +62,20 @@ class StructureArtifactRequest:
     artifact_root: Path
     max_artifact_age_seconds: int
     max_artifact_count: int
+    max_artifact_dir_bytes: int
+    max_structure_input_bytes: int
 
 
 class Plex34StructureService:
     @staticmethod
     def generate_artifact(request: StructureArtifactRequest) -> StructureArtifact:
-        _cleanup_artifacts(
+        # Make room first: age/count/byte rules, reserving the worst case for this artifact.
+        sweep_artifacts(
             request.artifact_root,
-            request.max_artifact_age_seconds,
-            request.max_artifact_count,
+            max_age_seconds=request.max_artifact_age_seconds,
+            max_count=request.max_artifact_count - 1,
+            max_bytes=request.max_artifact_dir_bytes,
+            reserve_bytes=request.max_structure_input_bytes,
         )
         try:
             markers = load_marker_ids(request.marker_path)
@@ -72,31 +89,39 @@ class Plex34StructureService:
         artifact_dir = request.artifact_root / artifact_id
         artifact_dir.mkdir(parents=True)
 
-        input_path = artifact_dir / STRUCTURE_INPUT_FILENAME
-        mainparams_path = artifact_dir / MAINPARAMS_FILENAME
-        extraparams_path = artifact_dir / EXTRAPARAMS_FILENAME
-        zip_path = artifact_dir / f"plex34_structure_{artifact_id}.zip"
+        try:
+            input_path = artifact_dir / STRUCTURE_INPUT_FILENAME
+            mainparams_path = artifact_dir / MAINPARAMS_FILENAME
+            extraparams_path = artifact_dir / EXTRAPARAMS_FILENAME
+            zip_path = artifact_dir / f"plex34_structure_{artifact_id}.zip"
 
-        write_structure_input(
-            input_path,
-            StructureInputData(
-                samples=vcf_data.samples,
-                ordered_markers=ordered_markers,
-                markers=vcf_data.markers,
-                population=population,
-            ),
-        )
-        write_mainparams(
-            request.template_paths.mainparams,
-            mainparams_path,
-            MainparamsData(
-                num_samples=len(vcf_data.samples),
-                num_markers=len(ordered_markers),
-                input_filename=STRUCTURE_INPUT_FILENAME,
-            ),
-        )
-        shutil.copyfile(request.template_paths.extraparams, extraparams_path)
-        write_zip(zip_path, (input_path, mainparams_path, extraparams_path))
+            write_structure_input(
+                input_path,
+                StructureInputData(
+                    samples=vcf_data.samples,
+                    ordered_markers=ordered_markers,
+                    markers=vcf_data.markers,
+                    population=population,
+                ),
+                max_bytes=request.max_structure_input_bytes,
+            )
+            write_mainparams(
+                request.template_paths.mainparams,
+                mainparams_path,
+                MainparamsData(
+                    num_samples=len(vcf_data.samples),
+                    num_markers=len(ordered_markers),
+                    input_filename=STRUCTURE_INPUT_FILENAME,
+                ),
+            )
+            shutil.copyfile(request.template_paths.extraparams, extraparams_path)
+            write_zip(zip_path, (input_path, mainparams_path, extraparams_path))
+        except Plex34StructureOutputTooLargeError as error:
+            shutil.rmtree(artifact_dir, ignore_errors=True)
+            raise Plex34StructureError(str(error)) from error
+        except BaseException:
+            shutil.rmtree(artifact_dir, ignore_errors=True)
+            raise
 
         warnings = list(vcf_data.warnings)
         if missing_markers:
@@ -111,22 +136,3 @@ class Plex34StructureService:
             warnings=warnings,
             zip_path=zip_path,
         )
-
-
-def _cleanup_artifacts(artifact_root: Path, max_age_seconds: int, max_count: int) -> None:
-    if not artifact_root.exists():
-        return
-
-    now = time.time()
-    artifact_dirs = [path for path in artifact_root.iterdir() if path.is_dir()]
-    for artifact_dir in artifact_dirs:
-        if now - artifact_dir.stat().st_mtime > max_age_seconds:
-            shutil.rmtree(artifact_dir)
-
-    remaining_dirs = sorted(
-        [path for path in artifact_root.iterdir() if path.is_dir()],
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    for artifact_dir in remaining_dirs[max_count:]:
-        shutil.rmtree(artifact_dir)

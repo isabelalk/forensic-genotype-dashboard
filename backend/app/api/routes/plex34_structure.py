@@ -14,11 +14,13 @@ from app.services import (
     StructureArtifactRequest,
     StructureTemplatePaths,
     find_uploaded_vcf,
+    sweep_all,
 )
+from app.services.heavy_jobs import run_heavy
 
 router = APIRouter(prefix="/api/vcf/plex34", tags=["VCF Processing"])
-STRUCTURE_OUTPUT_MAX_BYTES = 5 * 1024 * 1024
 UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
+ARTIFACT_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 
 
 def _plex34_template_paths() -> StructureTemplatePaths:
@@ -30,9 +32,25 @@ def _plex34_template_paths() -> StructureTemplatePaths:
 
 
 def _artifact_zip_path(artifact_id: str) -> Path | None:
-    if not re.fullmatch(r"[0-9a-f]{32}", artifact_id):
+    if not ARTIFACT_ID_PATTERN.fullmatch(artifact_id):
         return None
     return settings.get_artifact_dir() / artifact_id / f"plex34_structure_{artifact_id}.zip"
+
+
+def _generate(file_path: Path):
+    sweep_all(settings)
+    return Plex34StructureService.generate_artifact(
+        StructureArtifactRequest(
+            vcf_path=file_path,
+            marker_path=settings.get_markers_path("plex34"),
+            template_paths=_plex34_template_paths(),
+            artifact_root=settings.get_artifact_dir(),
+            max_artifact_age_seconds=settings.max_artifact_age_seconds,
+            max_artifact_count=settings.max_artifact_count,
+            max_artifact_dir_bytes=settings.max_artifact_dir_bytes,
+            max_structure_input_bytes=settings.max_structure_input_bytes,
+        )
+    )
 
 
 @router.post("/structure-input", response_model=Plex34StructureResponse)
@@ -42,20 +60,10 @@ async def generate_plex34_structure_input(file_id: str):
         raise HTTPException(status_code=404, detail="File not found")
 
     try:
-        artifact = Plex34StructureService.generate_artifact(
-            StructureArtifactRequest(
-                vcf_path=file_path,
-                marker_path=settings.get_markers_path("plex34"),
-                template_paths=_plex34_template_paths(),
-                artifact_root=settings.get_artifact_dir(),
-                max_artifact_age_seconds=settings.max_artifact_age_seconds,
-                max_artifact_count=settings.max_artifact_count,
-            )
-        )
+        artifact = await run_heavy(_generate, file_path)
     except Plex34StructureError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    except OSError as error:
-        raise HTTPException(status_code=500, detail=f"STRUCTURE artifact generation failed: {str(error)}") from error
+    # Plex34StructureConfigError and OSError propagate to the generic 500 handler.
 
     return Plex34StructureResponse(
         artifact_id=artifact.artifact_id,
@@ -91,7 +99,11 @@ async def parse_plex34_structure_output(file: UploadFile = File(...)):
         raise HTTPException(status_code=413, detail=str(error)) from error
 
     try:
-        parsed_output = Plex34StructureOutputParser.parse_text(output_text)
+        parsed_output = Plex34StructureOutputParser.parse_text(
+            output_text,
+            max_lines=settings.max_structure_output_lines,
+            max_clusters=settings.max_structure_clusters,
+        )
     except Plex34StructureOutputParseError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -105,10 +117,9 @@ async def parse_plex34_structure_output(file: UploadFile = File(...)):
 
 async def _read_structure_output(file: UploadFile) -> bytes:
     output = bytearray()
+    limit = settings.max_results_upload_bytes
     while chunk := await file.read(UPLOAD_READ_CHUNK_SIZE):
         output.extend(chunk)
-        if len(output) > STRUCTURE_OUTPUT_MAX_BYTES:
-            raise Plex34StructureOutputParseError(
-                f"Uploaded STRUCTURE output exceeds {STRUCTURE_OUTPUT_MAX_BYTES} bytes."
-            )
+        if len(output) > limit:
+            raise Plex34StructureOutputParseError(f"Uploaded STRUCTURE output exceeds {limit} bytes.")
     return bytes(output)

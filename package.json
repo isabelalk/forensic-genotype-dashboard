@@ -2,6 +2,7 @@
   "name": "hirisplex-fullstack",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "pnpm@10.34.6",
   "description": "HIrisPlex-S Phenotypic Modeling - Full Stack Application",
   "workspaces": [
     "frontend",

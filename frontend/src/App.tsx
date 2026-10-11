@@ -9,7 +9,8 @@ import {
   HiOutlineExclamationCircle,
   HiOutlineLightningBolt,
 } from 'react-icons/hi';
-import { vcfApi } from './api/client';
+import { UploadExpiredError, getApiErrorMessage, vcfApi } from './api/client';
+import { Alert } from './components/Alert';
 import { ConversionSection } from './components/ConversionSection';
 import { FileUploadZone } from './components/FileUploadZone';
 import { ResultsUploadSection } from './components/ResultsUploadSection';
@@ -57,7 +58,16 @@ const AnalysisSection = ({ title, description, icon, delayClass, children }: Ana
 );
 
 function AppContent() {
-  const { file, fileId, validationResult, setFileId, setValidationResult } = useVCFStore();
+  const {
+    file,
+    fileId,
+    validationResult,
+    uploadExpiredMessage,
+    setFileId,
+    setValidationResult,
+    expireUpload,
+    clearUploadExpiredMessage,
+  } = useVCFStore();
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -66,25 +76,54 @@ function AppContent() {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
+  useEffect(() => {
+    const releaseUploadOnPageHide = () => {
+      const heldFileId = useVCFStore.getState().fileId;
+      if (!heldFileId) return;
+
+      fetch(`/api/vcf/upload/${encodeURIComponent(heldFileId)}`, { method: 'DELETE', keepalive: true }).catch(
+        (error: unknown) => {
+          console.warn('Could not release the upload on page hide:', error);
+        },
+      );
+    };
+
+    window.addEventListener('pagehide', releaseUploadOnPageHide);
+    return () => window.removeEventListener('pagehide', releaseUploadOnPageHide);
+  }, []);
+
   const validateMutation = useMutation({
     mutationFn: vcfApi.validateFile,
     onSuccess: (data) => {
       setValidationResult(data);
     },
     onError: (error) => {
-      setUploadError(error instanceof Error ? error.message : 'Error validating the file.');
+      if (error instanceof UploadExpiredError) {
+        setUploadError(null);
+        expireUpload();
+        return;
+      }
+      setUploadError(getApiErrorMessage(error, 'Error validating the file.'));
     },
   });
 
   const uploadMutation = useMutation({
     mutationFn: vcfApi.uploadFile,
     onSuccess: (data) => {
+      if (!useVCFStore.getState().file) {
+        vcfApi.deleteUpload(data.file_id).catch((error: unknown) => {
+          console.warn('Could not release an upload whose file was removed:', error);
+        });
+        return;
+      }
+
       setUploadError(null);
+      clearUploadExpiredMessage();
       setFileId(data.file_id);
       validateMutation.mutate(data.file_id);
     },
     onError: (error) => {
-      setUploadError(error instanceof Error ? error.message : 'Error uploading the file.');
+      setUploadError(getApiErrorMessage(error, 'Error uploading the file.'));
     },
   });
 
@@ -152,6 +191,15 @@ function AppContent() {
 
         <main className="space-y-5 md:space-y-6">
           <AnalysisSection title="Upload VCF" description="Drag in the file, confirm upload, and keep validation in the backend's original order." icon={<HiOutlineCloudUpload className="h-6 w-6" />} delayClass="delay-100">
+            {uploadExpiredMessage ? (
+              <div role="status" className="mb-5">
+                <Alert variant="warning">
+                  <p className="font-bold">Upload expired</p>
+                  <p className="mt-1 text-sm text-[var(--color-text-muted)]">{uploadExpiredMessage}</p>
+                </Alert>
+              </div>
+            ) : null}
+
             <FileUploadZone />
 
             {file && !fileId && !uploadMutation.isPending ? (

@@ -49,14 +49,19 @@ You can also start both local processes with:
 
 ## Docker
 
+Create `.env` next to `docker-compose.yml` with a shared secret (compose refuses to start without it):
+
 ```bash
+echo "BACKEND_SHARED_SECRET=$(openssl rand -hex 32)" > .env
 docker compose up --build
 ```
 
 Docker URLs:
 
-- Frontend: `http://localhost`.
-- Backend: `http://localhost:8000`.
+- Frontend: `http://127.0.0.1:8080`.
+- Backend: not published. Only the frontend container reaches it.
+
+For public hosting behind Caddy, see [deployment.md](deployment.md).
 
 ## Basic Workflow
 

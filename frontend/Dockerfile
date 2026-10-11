@@ -1,16 +1,21 @@
-FROM node:18-alpine AS builder
+# syntax=docker/dockerfile:1
+
+# ---- Build stage ----
+FROM node:22.23.3-alpine AS builder
 
 WORKDIR /app
+
+# pnpm version comes from "packageManager" in the root package.json
+RUN corepack enable && corepack prepare pnpm@10.34.6 --activate
 
 # Copy monorepo root files for pnpm workspace
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-# Copy frontend package.json
+# Copy workspace package manifests
 COPY frontend/package.json ./frontend/
 COPY backend/package.json ./backend/
 
-# Install pnpm and dependencies
-RUN npm install -g pnpm && pnpm install --frozen-lockfile --filter frontend
+RUN pnpm install --frozen-lockfile --filter frontend
 
 # Copy frontend source code
 COPY frontend/ ./frontend/
@@ -18,15 +23,13 @@ COPY frontend/ ./frontend/
 # Build the application
 RUN pnpm --filter frontend run build
 
-# Production stage
-FROM nginx:alpine
+# ---- Runtime stage (non-root, listens on 8080) ----
+FROM nginxinc/nginx-unprivileged:1.27.5-alpine
 
-# Copy built files to nginx
 COPY --from=builder /app/frontend/dist /usr/share/nginx/html
 
-# Copy nginx configuration
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+# The image entrypoint renders /etc/nginx/templates/*.template with envsubst
+# into /etc/nginx/conf.d/ at startup.
+COPY frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
 
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+EXPOSE 8080

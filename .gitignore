@@ -75,3 +75,10 @@ plex34-*.png
 visual-*.png
 qa-*.png
 **/qa-*.png
+
+
+**agents**
+**claude**
+**omo**
+**opencode**
+**openspec**
